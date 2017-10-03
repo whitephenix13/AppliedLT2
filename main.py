@@ -2,7 +2,7 @@ from collections import defaultdict
 import sys
 
 #HYPERPARAMETERS
-MAX_SENTENCE_LENGTH= 6 # Do not consider sentence and english or german that have >MAX_SENTENCE_LENGTH words
+MAX_SENTENCE_LENGTH= 7 # Do not consider create phrase pair in english or german that have >MAX_SENTENCE_LENGTH words
 TEST = False #set to True to read the test. files instead of the file.
 
 #Small fix for python 3 code
@@ -26,21 +26,14 @@ GLOBAL_f_align = open(DATA_DIR +filename+'.aligned', 'r')
 #words: List of the words of the considered phrase (in German)
 #words_tgt: List of the words of the considered phrase (in English)
 #alignments: List of pairs as follow : [[0,0],[0,1],[1,2]] that corresponds to the words alignement
-#words_src_given_tgt: Used for lexical probabilities, dictionnary [German word] [English word] of the normalized word count
-#words_tgt_given_src: Used for lexical probabilities, dictionnary [English word] [German word] of the normalized word count
+#countDict: dict[(German word,English word)] = [p1(word),p2(word),...,p8(word),p1(phrase),p2(phrase),...,p8(phrase]
 #The idea of the algorithm is to check if each word alone can be a phrase and to extend those phrase by adding new words
 #to get all possible combination (see report for more explanation)
-def extractPhrases(words,words_tgt, alignments,words_src_given_tgt,words_tgt_given_src):
+def extractPhrases(words,words_tgt,alignments,countDict):
 
     currentPhrases = [] # Memory of all the currently build "phrases" (they can be incorrect)
     currentBoxes = [] # The corresponding boxes to the current phrases
     first_index=[] #keep track of the index of the first word of the currentPhrases
-
-    allPhrases=[] # List of all correct phrases
-    all_phrases_tgt = [] # all phrases in the target side
-
-    lexical_src_given_tgt = [] # lexical probability of source given target
-    lexical_tgt_given_src = [] # lexical probability of target given source
 
     #Loop over all the source words
     for word_ind in range(len(words)) :
@@ -50,19 +43,24 @@ def extractPhrases(words,words_tgt, alignments,words_src_given_tgt,words_tgt_giv
         currentPhrases.append("")
         first_index.append(None)
 
+        #shorten the considered phrases to only create phrase of length at most MAX_SENTENCE_LENGTH
+        final_i = len(currentBoxes)
+        first_i = 0 if (len(currentBoxes)<MAX_SENTENCE_LENGTH) else (len(currentBoxes) - MAX_SENTENCE_LENGTH)
+
         #Add this new word to all memorized phrase and see if they are correct
-        for i in range(len(currentBoxes)):
+        for i in range(first_i,final_i):
             if currentPhrases[i] == "":
                 currentPhrases[i] = words[word_ind]
                 first_index[i]=word_ind
             else:
                 currentPhrases[i] += " " + words[word_ind]
             correct, newBox = checkCorrectPhrase(currentBoxes[i],wordAlignments,alignments)
+            #Update current box
+            currentBoxes[i] = newBox
             #Add the new phrase to the final result if correct
             if correct :
                 phrase_tgt = [None] * len(words_tgt)  # to generate phrase in the target side
 
-                allPhrases.append(currentPhrases[i])
                 target_index = []
 
                 # getting the target side phrases
@@ -73,36 +71,10 @@ def extractPhrases(words,words_tgt, alignments,words_src_given_tgt,words_tgt_giv
                         target_index.append(wa[1])
 
                 phrase_tgt_new = " ".join([x for x in phrase_tgt if x != None])
-                all_phrases_tgt.append(phrase_tgt_new)
+                #TODO: do reordering count here
+                countDict[(currentPhrases[i],phrase_tgt_new)][0]+=1 #Dummy count to test the dictionnary and writting
 
-                # getting the l(e|f) and l(f|e)
-                lexval_temp = 1.0
-                lexval_temp2 = 1.0
-
-                for cpi in range(first_index[i],word_ind+1):
-                    word_alignments = findWordAlignments(int(cpi),alignments)
-                    temp = 0
-                    if (len(word_alignments) > 0):
-                        for wa in word_alignments:
-                            temp += words_src_given_tgt[words[wa[0]]][words_tgt[wa[1]]]
-                        temp /= len(word_alignments)
-                        lexval_temp *= temp
-
-                for ti in target_index:
-                    word_alignments2 = findWordAlignments(int(ti),alignments, True)
-                    temp2 = 0
-                    if (len(word_alignments2) > 0):
-                        for wa in word_alignments2:
-                            temp2 += words_tgt_given_src[words_tgt[wa[1]]][words[wa[0]]]
-                        temp2 /= len(word_alignments2)
-                        lexval_temp2 *= temp2
-
-                lexical_src_given_tgt.append(lexval_temp)
-                lexical_tgt_given_src.append(lexval_temp2)
-                #Update the boxes
-            currentBoxes[i] = newBox
-
-    return allPhrases, all_phrases_tgt, lexical_src_given_tgt, lexical_tgt_given_src
+    return countDict
 
 #prevBox: Current box of the phrases (without the new word)
 #wordAlignments: alignments for the new word to add to the phrase
@@ -157,125 +129,62 @@ def computePhraseBox(prevBox, newAlignment):
                 box[3] = y
     return box
 
-####################### LEXICAL PROBABILITY COMPUTATION FUNCTION ####################################################################""
-
-#Normalize the count of the words
-def normalize(d, target=1.0):
-    raw = sum(d.values())
-    factor = target/raw
-    if python3Code:
-        return {key: value * factor for key, value in list(d.items())}
-    else:
-        return {key:value*factor for key,value in d.iteritems()}
-
-
 ####################### WRITING THE RESULT IN A FILE FUNCTION  ####################################################################""
 
+#countDict: dict[(German word,English word)] = [p1(word),p2(word),...,p8(word),p1(phrase),p2(phrase),...,p8(phrase]
 #Function to write the results in a file given the following format :
-#f ||| e ||| p(f|e) p(e|f) l(f|e) l(e|f) ||| freq(f) freq(e) freq(f, e)
-def writeResults(filename, _phrases_src_given_tgt_counts, lexical_src_given_tgt, lexical_tgt_given_src ):
+#f ||| e ||| p1 p2 p3 p4 p5 p6 p7 p8
+#with p1 = p1 = p l->r (m|(f,e)) // p2 = p l->r (s|(f,e)) //  p3 = p l->r (dl|(f,e)) //  p4 = p l->r (dr|(f,e))
+#with p1 = p5 = p r->l (m|(f,e)) // p6 = p r->l (s|(f,e)) //  p7 = p r->l (dl|(f,e)) //  p8 = p r->l (dr|(f,e))
+
+def writeResults(filename,countDict):
     f = open(filename, 'w')
-    f.write("f ||| e ||| p(f|e) p(e|f) l(f|e) l(e|f) ||| freq(f) freq(e) freq(f, e)\n")
-    for source_phrase, targetToCountDict in _phrases_src_given_tgt_counts.items():
-        freq_f = 0
-        #Compute frequencies here to avoid too much memory usage
-        for key, value in _phrases_src_given_tgt_counts[source_phrase].items():
-            freq_f+=value
-        for target_phrase, freq_fe in targetToCountDict.items():
-            if(freq_fe >0):
-                freq_e = 0
-                for key, value in _phrases_src_given_tgt_counts.items():
-                    if _phrases_src_given_tgt_counts[key][target_phrase]:
-                        freq_e+=_phrases_src_given_tgt_counts[key][target_phrase]
-                lef = lexical_src_given_tgt[source_phrase][target_phrase]
-                lfe = lexical_tgt_given_src[target_phrase][source_phrase]
-                # f   |||e    |||p(f|e)      p(e|f) l(f|e) l(e|f) |||freq(f) freq(e) freq(f, e)
-                f.write(str(source_phrase) \
-                        +" ||| " + str(target_phrase)\
-                        +" ||| "+str(freq_fe/freq_e)+ " "+str(freq_fe/freq_f) + " " + str(sum(lef) / float(len(lef))) + " " + str(sum(lfe) / float(len(lfe)))\
-                        +" ||| "+ str(freq_f)+ " "+ str(freq_e)+ " "+ str(freq_fe)+"\n" )
+    f.write("f ||| e ||| p_l->r (m|(f,e)) p_l->r (s|(f,e)) p_l->r (dl|(f,e)) p_l->r (dr|(f,e)) " + \
+            "p_r->l (m|(f,e)) p_r->l (s|(f,e)) p_r->l (dl|(f,e)) p_r->l (dr|(f,e))\n")
+    #for source_phrase, targetToCountDict in _phrases_src_given_tgt_counts.items():
+        # f   |||e    |||p(f|e)      p(e|f) l(f|e) l(e|f) |||freq(f) freq(e) freq(f, e)
+    for source_target_phrase,countList in countDict.items():
+        #TODO: agregate the 16 values to 8
+        f.write(str(source_target_phrase[0])+ " ||| "+ str(source_target_phrase[1])+ " ||| "+ str(countList[0])+" "+ str(countList[1])+" "+ \
+                str(countList[2]) + " " + str(countList[3]) + " " + str(countList[4])+" "+ str(countList[5])+" "+ \
+                str(countList[6]) + " " + str(countList[7]) + "\n")
+    f.write("\n")
     f.close()
 
 ############################            MAIN             ###########################################################################
 
 
-### count word occurences ###
-GLOBAL_words_src_given_tgt_counts = defaultdict(lambda : defaultdict(float))
-GLOBAL_words_tgt_given_src_counts = defaultdict(lambda : defaultdict(float))
-for sentence_en, sentence_de, line_aligned in zip(GLOBAL_f_en, GLOBAL_f_de, GLOBAL_f_align):
-    words_de = sentence_de.replace("\n", "").split()
-    words_de = list(filter(lambda x: x != '', words_de))
-    words_en = sentence_en.replace("\n", "").split()
-    words_en = list(filter(lambda x: x != '', words_en))
-
-    if not len(words_de) > MAX_SENTENCE_LENGTH and not len(words_en) > MAX_SENTENCE_LENGTH:
-        alignments = []
-        alignments_temp = line_aligned.replace("\n","").split(" ")
-        for al in alignments_temp:
-            alignments.append(al.split("-"))
-        alignments=[list(map(int,pair)) for pair in alignments]
-        for alig in alignments:
-            GLOBAL_words_src_given_tgt_counts[words_de[alig[0]]][words_en[alig[1]]] += 1.0
-            GLOBAL_words_tgt_given_src_counts[words_en[alig[1]]][words_de[alig[0]]] += 1.0
-
-
-
-### Normalize words occurence (for lexical) ###
-for key in GLOBAL_words_src_given_tgt_counts:
-    GLOBAL_words_src_given_tgt_counts[key] = normalize(GLOBAL_words_src_given_tgt_counts[key])
-for key in GLOBAL_words_tgt_given_src_counts:
-    GLOBAL_words_tgt_given_src_counts[key] = normalize(GLOBAL_words_tgt_given_src_counts[key])
-
 ### Define variables
-GLOBAL_phrases_src_given_tgt_counts = defaultdict(lambda : defaultdict(float)) #dictionnary[German word][English word]
-                                                                            # = count(German word,English word)
-GLOBAL_lexical_src_given_tgt_prob = defaultdict(lambda : defaultdict(list)) #Dictionnary[German word][English word]  = lexical prob
-GLOBAL_lexical_tgt_given_src_prob = defaultdict(lambda : defaultdict(list))  #Dictionnary[English word][German word]  = lexical prob
+GLOBAL_countDict = defaultdict(lambda : [0]*16) #Dictionnary of list of 16 elements for all counts (p1->p8 and word/phrase based)
+                                                #countDict: dict[(German word,English word)] = [p1(word),p2(word),...,p8(word),
+                                                # p1(phrase),p2(phrase),...,p8(phrase]
 
-#Reset the files so that they can be read again
-GLOBAL_f_en.seek(0)
-GLOBAL_f_de.seek(0)
-GLOBAL_f_align.seek(0)
+GLOBAL_count = 0 #Counter to see the number of iteration
 
-#Counter to see the number of iteration
-GLOBAL_count = 0
-#Write the actual data used in a file : filtered by MAX_SENTENCE_LENGTH
-GLOBAL_f_en_s = open(DATA_DIR +filename+'_simp.en', 'w')
-GLOBAL_f_de_s = open(DATA_DIR +filename+'_simp.de', 'w')
-GLOBAL_f_align_s = open(DATA_DIR +filename+'_simp.aligned', 'w')
-
-
+TEST_stop_after = -1 #set to negative value to consider all dataset or set to max number of phrase
 #Main loop: extract phrases and count
 for sentence_en, sentence_de, line_aligned in zip(GLOBAL_f_en, GLOBAL_f_de, GLOBAL_f_align):
     if GLOBAL_count%1000 == 0:
         print('count: '+ str(GLOBAL_count))
+    if TEST_stop_after>0 and GLOBAL_count > TEST_stop_after:
+        break
     #Extract the words from the phrase and remove the empty word
     words_de = sentence_de.replace("\n","").split(" ")
     words_de = list(filter(lambda x: x != '', words_de))
     words_en = sentence_en.replace("\n","").split(" ")
     words_en = list(filter(lambda x: x != '', words_en))
-    #Filter sentence that are too long
-    if not len(words_de) > MAX_SENTENCE_LENGTH and not len(words_en) > MAX_SENTENCE_LENGTH:
-        GLOBAL_f_en_s.write(sentence_en)
-        GLOBAL_f_de_s.write(sentence_de)
-        GLOBAL_f_align_s.write(line_aligned)
-        alignments = []
-        #Store the alignments in the format : [[1,1][2,1][3,2]]
-        alignments_temp = line_aligned.replace("\n","").split(" ")
-        for al in alignments_temp:
-            alignments.append(al.split("-"))
-        alignments=[list(map(int,pair)) for pair in alignments]
-        #Extracts phrases and count phrases occurences
-        phrases_src, phrases_tgt, lexical_src_given_tgt, lexical_tgt_given_src = extractPhrases(words_de, words_en, alignments,\
-                    GLOBAL_words_src_given_tgt_counts, GLOBAL_words_tgt_given_src_counts)
-        for p_src, p_tgt, l_src_tgt, l_tgt_src in zip(phrases_src, phrases_tgt, lexical_src_given_tgt, lexical_tgt_given_src):
-            GLOBAL_phrases_src_given_tgt_counts[p_src][p_tgt] += 1.0
-            GLOBAL_lexical_src_given_tgt_prob[p_src][p_tgt].append(l_src_tgt)
-            GLOBAL_lexical_tgt_given_src_prob[p_tgt][p_src].append(l_tgt_src)
-    GLOBAL_count+=1
+    alignments = []
+    #Store the alignments in the format : [[1,1][2,1][3,2]]
+    alignments_temp = line_aligned.replace("\n","").split(" ")
+    for al in alignments_temp:
+        alignments.append(al.split("-"))
+    alignments=[list(map(int,pair)) for pair in alignments]
+    #Extracts phrases and count phrases occurences
+    GLOBAL_countDict = extractPhrases(words_de, words_en, alignments,GLOBAL_countDict)
+    GLOBAL_count += 1
 print(GLOBAL_count)
 
-#Write the result, this operation is slow (~30 sec) to avoid too much memory usage
-writeResults("test_big.txt", GLOBAL_phrases_src_given_tgt_counts, GLOBAL_lexical_src_given_tgt_prob, GLOBAL_lexical_tgt_given_src_prob)
+#Write the result
+writeResults("final_result.txt", GLOBAL_countDict)
 print('done')
 
