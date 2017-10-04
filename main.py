@@ -3,7 +3,7 @@ import sys
 
 #HYPERPARAMETERS
 MAX_SENTENCE_LENGTH= 7 # Do not consider create phrase pair in english or german that have >MAX_SENTENCE_LENGTH words
-TEST_stop_after = 3000 #set to negative value to consider all dataset or set to max number of phrase
+TEST_stop_after = 500 #set to negative value to consider all dataset or set to max number of phrase
 TEST = False #set to True to read the test. files instead of the file.
 
 #Small fix for python 3 code
@@ -36,6 +36,8 @@ def extractPhrases(words,words_tgt,alignments,countDict):
     currentBoxes = [] # The corresponding boxes to the current phrases
     first_index=[] #keep track of the index of the first word of the currentPhrases
 
+    all_phrase_pair = []
+    all_boxes = []
     #Loop over all the source words
     for word_ind in range(len(words)) :
         wordAlignments = findWordAlignments(word_ind,alignments)
@@ -70,12 +72,18 @@ def extractPhrases(words,words_tgt,alignments,countDict):
                     for wa in word_alignments:
                         phrase_tgt[wa[1]] = words_tgt[wa[1]]
                         target_index.append(wa[1])
+                if len(phrase_tgt)<=MAX_SENTENCE_LENGTH :
+                    phrase_tgt_new = " ".join([x for x in phrase_tgt if x != None])
 
-                phrase_tgt_new = " ".join([x for x in phrase_tgt if x != None])
+                    #word based reordering count
+                    countDict = addWordBasedEvent((currentPhrases[i],phrase_tgt_new),newBox,alignments,countDict)
+                    all_phrase_pair.append((currentPhrases[i],phrase_tgt_new))
+                    all_boxes.append(newBox[:]) #Use this to make a true copy of the list
 
-                #word based reordering count
-                countDict = addWordBasedEvent((currentPhrases[i],phrase_tgt_new),newBox,alignments,countDict)
-        # TODO: do phrase based reordering count here
+    #Update phrase based reordering counts
+    for ind, phrase_pair in enumerate(all_phrase_pair):
+        addPhraseBasedEvent(phrase_pair, all_boxes[ind], all_boxes, countDict)
+
     return countDict
 
 #prevBox: Current box of the phrases (without the new word)
@@ -141,10 +149,15 @@ def bottom(box):
 def top(box):
     return box[2]
 
+#Function to return the size of the box.
+def size(box):
+    if box==[-1,-1,-1,-1] :
+        return -1
+    return (box[2]-box[0]+1)*(box[3]-box[1]+1)
 ####################### REORDERING EVENTS COUNT ####################################################################
 
 #phrase_pair: String tuple of (German phrase, English phrase)
-#phrase_box :  Box corresponding of to the current phrase of the form : [x min,y min,x max,y max] with an alignment defined as (x,y)
+#phrase_box :  Box corresponding of the current phrase of the form : [x min,y min,x max,y max] with an alignment defined as (x,y)
 #sentence_alignments: list of pair of alignments (x,y) where x corresponds to the German word and y the English one
 #countDict: dict[(German word,English word)] = [p1(word),p2(word),...,p8(word),p1(phrase),p2(phrase),...,p8(phrase]
 #Returns the updated countDictionnary after addition of all events count (both left and right) in countDict
@@ -235,8 +248,87 @@ def addWordBasedEvent(phrase_pair, phrase_box,  sentence_alignments, countDict):
 
     return countDict
 
+#phrase_pair: String tuple of (German phrase, English phrase)
+#source_box :  Box corresponding of the current source phrase of the form : [x min,y min,x max,y max] with an alignment defined as (x,y)
+#target_boxes: box associated to the target phrases
+#countDict: dict[(German word,English word)] = [p1(word),p2(word),...,p8(word),p1(phrase),p2(phrase),...,p8(phrase]
+#Returns the updated countDictionnary after addition of all events count (both left and right) in countDict
+def addPhraseBasedEvent(phrase_pair, source_box, target_boxes, countDict):
+    # Get rid of unaligned words
+    if source_box == [-1, -1, -1, -1]:
+        return countDict
 
+    #Find the best box (ie the closest to the source and the biggest wrt its size) to the left of the source one
+    best_left_box = [-1,-1,-1,-1]
+    best_left_dist = 10000 #dist to source box
+    best_left_size = -1
 
+    #Find the best box (ie the closest to the source and the biggest wrt its size) to the right of the source one
+    best_right_box = [-1,-1,-1,-1]
+    best_right_dist = 10000 #dist to source box
+    best_right_size = -1
+
+    #Look for the biggest box that is the closest to the source_phrase's box
+    for index, t_box in enumerate(target_boxes):
+        if t_box == [-1,-1,-1,-1]:
+            continue
+        #left case
+        left_dist = left(source_box) - right(t_box)
+        right_dist = left(t_box) - right(source_box)
+
+        if left_dist > 0:
+            # look for the closest box to the source box
+            if left_dist == best_left_dist :
+                # look for the biggest box
+                left_size = size(t_box)
+                if left_size > best_left_size:
+                    best_left_dist = left_dist
+                    best_left_box = t_box
+                    best_left_size = size(t_box)
+            elif left_dist < best_left_dist  :
+                best_left_dist=left_dist
+                best_left_box=t_box
+                best_left_size= size(t_box)
+
+        elif right_dist >0:
+             #look for the closest box to the source box
+
+            if right_dist == best_right_dist :
+                # look for the biggest box
+                right_size = size(t_box)
+                if right_size>best_right_size:
+                    best_right_dist = right_dist
+                    best_right_box = t_box
+                    best_right_size = size(t_box)
+            elif right_dist < best_right_dist :
+                best_right_dist = right_dist
+                best_right_box = t_box
+                best_right_size = size(t_box)
+
+    lr_event = 11  # left right, 8=monotonic, 9=swap, 10= disc left, 11=disc right
+    rl_event = 15  # right left, 12=monotonic, 13=swap, 14= disc left, 15=disc right
+    if best_right_box != [-1,-1,-1,-1]:
+        if bottom(best_right_box)-1 == top(source_box):
+            lr_event = 8
+        elif top(best_right_box)+1 == bottom(source_box):
+            lr_event = 9
+        elif top(best_right_box) < bottom(source_box):
+            lr_event = 10
+        else:
+            lr_event = 11
+        countDict[phrase_pair][lr_event] += 1
+    if best_left_box != [-1, -1, -1, -1]:
+        if top(best_left_box) +1 == bottom(source_box):
+            rl_event = 12
+        elif bottom(best_left_box) -1 == top(source_box):
+            rl_event= 13
+        elif top(best_left_box) < bottom(source_box):
+            rl_event = 14
+        else:
+            rl_event = 15
+        countDict[phrase_pair][rl_event] += 1
+
+    return countDict
 
 ####################### WRITING THE RESULT IN A FILE FUNCTION  ####################################################################""
 
@@ -247,18 +339,25 @@ def addWordBasedEvent(phrase_pair, phrase_box,  sentence_alignments, countDict):
 #with p1 = p5 = p r->l (m|(f,e)) // p6 = p r->l (s|(f,e)) //  p7 = p r->l (dl|(f,e)) //  p8 = p r->l (dr|(f,e))
 
 def writeResults(filename,countDict):
-    f = open(filename, 'w')
-    f.write("f ||| e ||| p_l->r (m|(f,e)) p_l->r (s|(f,e)) p_l->r (dl|(f,e)) p_l->r (dr|(f,e)) " + \
-            "p_r->l (m|(f,e)) p_r->l (s|(f,e)) p_r->l (dl|(f,e)) p_r->l (dr|(f,e))\n")
+    f = open(filename+"_word.txt", 'w')
+    f2 = open(filename+"_phrase.txt", 'w')
+    info = "f ||| e ||| p_l->r (m|(f,e)) p_l->r (s|(f,e)) p_l->r (dl|(f,e)) p_l->r (dr|(f,e)) " + \
+           "p_r->l (m|(f,e)) p_r->l (s|(f,e)) p_r->l (dl|(f,e)) p_r->l (dr|(f,e))\n"
+    f.write(info)
+    f2.write(info)
     #for source_phrase, targetToCountDict in _phrases_src_given_tgt_counts.items():
         # f   |||e    |||p(f|e)      p(e|f) l(f|e) l(e|f) |||freq(f) freq(e) freq(f, e)
     for source_target_phrase,countList in countDict.items():
-        #TODO: agregate the 16 values to 8
         f.write(str(source_target_phrase[0])+ " ||| "+ str(source_target_phrase[1])+ " ||| "+ str(countList[0])+" "+ str(countList[1])+" "+ \
                 str(countList[2]) + " " + str(countList[3]) + " " + str(countList[4])+" "+ str(countList[5])+" "+ \
                 str(countList[6]) + " " + str(countList[7]) + "\n")
+        f2.write(str(source_target_phrase[0])+ " ||| "+ str(source_target_phrase[1])+ " ||| "+ str(countList[8])+" "+ str(countList[9])+" "+ \
+                str(countList[10]) + " " + str(countList[11]) + " " + str(countList[12])+" "+ str(countList[13])+" "+ \
+                str(countList[14]) + " " + str(countList[15]) + "\n")
     f.write("\n")
+    f2.write("\n")
     f.close()
+    f2.close()
 
 ############################            MAIN             ###########################################################################
 
@@ -292,6 +391,6 @@ for sentence_en, sentence_de, line_aligned in zip(GLOBAL_f_en, GLOBAL_f_de, GLOB
 print(GLOBAL_count)
 
 #Write the result
-writeResults("final_result.txt", GLOBAL_countDict)
+writeResults("final_result", GLOBAL_countDict)
 print('done')
 
