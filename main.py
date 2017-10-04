@@ -133,13 +133,13 @@ def computePhraseBox(prevBox, newAlignment):
 
 #Functions to ease the reading of the code
 def left(box):
-    return box[0]
-def right(box):
-    return box[2]
-def bottom(box):
     return box[1]
-def top(box):
+def right(box):
     return box[3]
+def bottom(box):
+    return box[0]
+def top(box):
+    return box[2]
 
 ####################### REORDERING EVENTS COUNT ####################################################################
 
@@ -149,13 +149,19 @@ def top(box):
 #countDict: dict[(German word,English word)] = [p1(word),p2(word),...,p8(word),p1(phrase),p2(phrase),...,p8(phrase]
 #Returns the updated countDictionnary after addition of all events count (both left and right) in countDict
 def addWordBasedEvent(phrase_pair, phrase_box,  sentence_alignments, countDict):
+    #Get rid of unaligned words
+    if phrase_box==[-1,-1,-1,-1] :
+        return countDict
     lr_event = 3 #left right, 0=monotonic, 1=swap, 2= disc left, 3=disc right
     rl_event = 7 #right left, 4=monotonic, 5=swap, 6= disc left, 7=disc right
 
     left_alignment_found = False #set to true if the "best" event was found (wrt monotonic > swap > disc)
     right_alignment_found = False#set to true if the "best" event was found (wrt monotonic > swap > disc)
     shift = 0 # int to shift the english word we are looking at. Used to handle unaligned English words
+
     max_right_bound = -1
+    left_bound_reached = False
+    right_bound_reached = False
 
     #Loop until an non empty English word was found (so that a reordering event can be computed) or that the index is out
     #of bounds
@@ -166,7 +172,6 @@ def addWordBasedEvent(phrase_pair, phrase_box,  sentence_alignments, countDict):
         for alignment_pair in sentence_alignments:
             x=alignment_pair[0]
             y=alignment_pair[1]
-
             #compute the maximum bound to the right
             if y > max_right_bound :
                 max_right_bound=y
@@ -176,7 +181,7 @@ def addWordBasedEvent(phrase_pair, phrase_box,  sentence_alignments, countDict):
                 #check for monotonic
                 if (top(phrase_box)+1) == x:
                     lr_event = 0
-                if lr_event > 1:
+                elif lr_event > 1:
                     #check for swap
                     if (bottom(phrase_box) - 1) == x:
                         lr_event = 1
@@ -194,27 +199,39 @@ def addWordBasedEvent(phrase_pair, phrase_box,  sentence_alignments, countDict):
                 some_left_align_found=True
                 # check for monotonic
                 if (bottom(phrase_box) - 1) == x:
-                    lr_event = 4
-                if lr_event > 5:
+                    rl_event = 4
+                elif rl_event > 5:
                     # check for swap
                     if (top(phrase_box) + 1) == x:
-                        lr_event = 5
+                        rl_event = 5
                     else:
                         # check for left discontinuities
                         # NOTE: if phrases are correctly built, there is either a left or right discontinuities
                         # but their can't be both!
                         if bottom(phrase_box) > x:
-                            lr_event = 6
+                            rl_event = 6
                         else:
-                            lr_event = 7
+                            rl_event = 7
         shift += 1
         #alignment is considered to be found if it was already found or it was found in this iteration or the boundary
         #is reached
-        left_alignment_found = left_alignment_found or some_left_align_found or  (left(phrase_box) - 1 - shift) < 0
-        right_alignment_found = right_alignment_found or some_right_align_found or (right(phrase_box) + 1 + shift) > max_right_bound
 
-    countDict[phrase_pair][lr_event]+=1
-    countDict[phrase_pair][rl_event]+=1
+        #Compute if an alignment was found
+        left_alignment_found = left_alignment_found or some_left_align_found
+        right_alignment_found = right_alignment_found or some_right_align_found
+
+        #Check for out of bound and allow to know if the countDict has to be updated
+        left_bound_reached = left_bound_reached or not left_alignment_found and (left(phrase_box) - 1 - shift) < 0
+        right_bound_reached = right_bound_reached or not right_alignment_found and (right(phrase_box) + 1 + shift) > max_right_bound
+
+        #Update wrt bound
+        left_alignment_found = left_alignment_found or left_bound_reached
+        right_alignment_found = right_alignment_found or right_bound_reached
+
+    if not right_bound_reached:
+        countDict[phrase_pair][lr_event]+=1
+    if not left_bound_reached:
+        countDict[phrase_pair][rl_event]+=1
 
     return countDict
 
