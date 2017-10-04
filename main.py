@@ -3,6 +3,7 @@ import sys
 
 #HYPERPARAMETERS
 MAX_SENTENCE_LENGTH= 7 # Do not consider create phrase pair in english or german that have >MAX_SENTENCE_LENGTH words
+TEST_stop_after = 3000 #set to negative value to consider all dataset or set to max number of phrase
 TEST = False #set to True to read the test. files instead of the file.
 
 #Small fix for python 3 code
@@ -71,9 +72,10 @@ def extractPhrases(words,words_tgt,alignments,countDict):
                         target_index.append(wa[1])
 
                 phrase_tgt_new = " ".join([x for x in phrase_tgt if x != None])
-                #TODO: do reordering count here
-                countDict[(currentPhrases[i],phrase_tgt_new)][0]+=1 #Dummy count to test the dictionnary and writting
 
+                #word based reordering count
+                countDict = addWordBasedEvent((currentPhrases[i],phrase_tgt_new),newBox,alignments,countDict)
+        # TODO: do phrase based reordering count here
     return countDict
 
 #prevBox: Current box of the phrases (without the new word)
@@ -129,6 +131,74 @@ def computePhraseBox(prevBox, newAlignment):
                 box[3] = y
     return box
 
+#Functions to ease the reading of the code
+def left(box):
+    return box[0]
+def right(box):
+    return box[2]
+def bottom(box):
+    return box[1]
+def top(box):
+    return box[3]
+
+####################### REORDERING EVENTS COUNT ####################################################################
+
+#phrase_pair: String tuple of (German phrase, English phrase)
+#phrase_box :  Box corresponding of to the current phrase of the form : [x min,y min,x max,y max] with an alignment defined as (x,y)
+#sentence_alignments: list of pair of alignments (x,y) where x corresponds to the German word and y the English one
+#countDict: dict[(German word,English word)] = [p1(word),p2(word),...,p8(word),p1(phrase),p2(phrase),...,p8(phrase]
+#Returns the updated countDictionnary after addition of all events count (both left and right) in countDict
+def addWordBasedEvent(phrase_pair, phrase_box,  sentence_alignments, countDict):
+    lr_event = 3 #left right, 0=monotonic, 1=swap, 2= disc left, 3=disc right
+    rl_event = 7 #right left, 4=monotonic, 5=swap, 6= disc left, 7=disc right
+
+    for alignment_pair in sentence_alignments:
+        x=alignment_pair[0]
+        y=alignment_pair[1]
+        #check left to right alignments only if no monotonic found (optimisation)
+        if(lr_event != 0 and (right(phrase_box)+1) == y):
+            #check for monotonic
+            if( (top(phrase_box)+1) == x):
+                lr_event=0
+            if(lr_event > 1):
+                #check for swap
+                if ((bottom(phrase_box) - 1) == x):
+                    lr_event = 1
+                else:
+                    #check for left discontinuities
+                    #NOTE: if phrases are correctly built, there is either a left or right discontinuities
+                    #but their can't be both!
+                    if (bottom(phrase_box)> x):
+                        lr_event = 2
+                    else:
+                        lr_event = 3
+
+        # check right to left alignments only if no monotonic found (optimisation)
+        if (lr_event != 4 and (left(phrase_box) - 1) == y):
+            # check for monotonic
+            if ((bottom(phrase_box) - 1) == x):
+                lr_event = 4
+            if (lr_event > 5):
+                # check for swap
+                if ((top(phrase_box) + 1) == x):
+                    lr_event = 5
+                else:
+                    # check for left discontinuities
+                    # NOTE: if phrases are correctly built, there is either a left or right discontinuities
+                    # but their can't be both!
+                    if (bottom(phrase_box) > x):
+                        lr_event = 6
+                    else:
+                        lr_event = 7
+
+    countDict[phrase_pair][lr_event]+=1
+    countDict[phrase_pair][rl_event]+=1
+
+    return countDict
+
+
+
+
 ####################### WRITING THE RESULT IN A FILE FUNCTION  ####################################################################""
 
 #countDict: dict[(German word,English word)] = [p1(word),p2(word),...,p8(word),p1(phrase),p2(phrase),...,p8(phrase]
@@ -160,8 +230,6 @@ GLOBAL_countDict = defaultdict(lambda : [0]*16) #Dictionnary of list of 16 eleme
                                                 # p1(phrase),p2(phrase),...,p8(phrase]
 
 GLOBAL_count = 0 #Counter to see the number of iteration
-
-TEST_stop_after = -1 #set to negative value to consider all dataset or set to max number of phrase
 #Main loop: extract phrases and count
 for sentence_en, sentence_de, line_aligned in zip(GLOBAL_f_en, GLOBAL_f_de, GLOBAL_f_align):
     if GLOBAL_count%1000 == 0:
