@@ -152,44 +152,66 @@ def addWordBasedEvent(phrase_pair, phrase_box,  sentence_alignments, countDict):
     lr_event = 3 #left right, 0=monotonic, 1=swap, 2= disc left, 3=disc right
     rl_event = 7 #right left, 4=monotonic, 5=swap, 6= disc left, 7=disc right
 
-    for alignment_pair in sentence_alignments:
-        x=alignment_pair[0]
-        y=alignment_pair[1]
-        #check left to right alignments only if no monotonic found (optimisation)
-        if(lr_event != 0 and (right(phrase_box)+1) == y):
-            #check for monotonic
-            if( (top(phrase_box)+1) == x):
-                lr_event=0
-            if(lr_event > 1):
-                #check for swap
-                if ((bottom(phrase_box) - 1) == x):
-                    lr_event = 1
-                else:
-                    #check for left discontinuities
-                    #NOTE: if phrases are correctly built, there is either a left or right discontinuities
-                    #but their can't be both!
-                    if (bottom(phrase_box)> x):
-                        lr_event = 2
-                    else:
-                        lr_event = 3
+    left_alignment_found = False #set to true if the "best" event was found (wrt monotonic > swap > disc)
+    right_alignment_found = False#set to true if the "best" event was found (wrt monotonic > swap > disc)
+    shift = 0 # int to shift the english word we are looking at. Used to handle unaligned English words
+    max_right_bound = -1
 
-        # check right to left alignments only if no monotonic found (optimisation)
-        if (lr_event != 4 and (left(phrase_box) - 1) == y):
-            # check for monotonic
-            if ((bottom(phrase_box) - 1) == x):
-                lr_event = 4
-            if (lr_event > 5):
-                # check for swap
-                if ((top(phrase_box) + 1) == x):
-                    lr_event = 5
-                else:
-                    # check for left discontinuities
-                    # NOTE: if phrases are correctly built, there is either a left or right discontinuities
-                    # but their can't be both!
-                    if (bottom(phrase_box) > x):
-                        lr_event = 6
+    #Loop until an non empty English word was found (so that a reordering event can be computed) or that the index is out
+    #of bounds
+    while not left_alignment_found or not right_alignment_found:
+        some_right_align_found = False #set to true if some event was found (but not necessarily the best)
+        some_left_align_found = False #set to true if some event was found (but not necessarily the best)
+
+        for alignment_pair in sentence_alignments:
+            x=alignment_pair[0]
+            y=alignment_pair[1]
+
+            #compute the maximum bound to the right
+            if y > max_right_bound :
+                max_right_bound=y
+            #check left to right alignments if not found yet
+            if not right_alignment_found and (right(phrase_box)+1+shift) == y:
+                some_right_align_found = True
+                #check for monotonic
+                if (top(phrase_box)+1) == x:
+                    lr_event = 0
+                if lr_event > 1:
+                    #check for swap
+                    if (bottom(phrase_box) - 1) == x:
+                        lr_event = 1
                     else:
-                        lr_event = 7
+                        #check for left discontinuities
+                        #NOTE: if phrases are correctly built, there is either a left or right discontinuities
+                        #but their can't be both!
+                        if (bottom(phrase_box)> x):
+                            lr_event = 2
+                        else:
+                            lr_event = 3
+
+            # check right to left alignments if not found yet
+            if not left_alignment_found and (left(phrase_box) - 1-shift) == y:
+                some_left_align_found=True
+                # check for monotonic
+                if (bottom(phrase_box) - 1) == x:
+                    lr_event = 4
+                if lr_event > 5:
+                    # check for swap
+                    if (top(phrase_box) + 1) == x:
+                        lr_event = 5
+                    else:
+                        # check for left discontinuities
+                        # NOTE: if phrases are correctly built, there is either a left or right discontinuities
+                        # but their can't be both!
+                        if bottom(phrase_box) > x:
+                            lr_event = 6
+                        else:
+                            lr_event = 7
+        shift += 1
+        #alignment is considered to be found if it was already found or it was found in this iteration or the boundary
+        #is reached
+        left_alignment_found = left_alignment_found or some_left_align_found or  (left(phrase_box) - 1 - shift) < 0
+        right_alignment_found = right_alignment_found or some_right_align_found or (right(phrase_box) + 1 + shift) > max_right_bound
 
     countDict[phrase_pair][lr_event]+=1
     countDict[phrase_pair][rl_event]+=1
