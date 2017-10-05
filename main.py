@@ -391,6 +391,28 @@ for sentence_en, sentence_de, line_aligned in zip(GLOBAL_f_en, GLOBAL_f_de, GLOB
 print(GLOBAL_count)
 
 #Write the result
-writeResults("final_result", GLOBAL_countDict)
+#writeResults("final_result", GLOBAL_countDict)
+
+# Writing results of smoothing LRM
+for source_target_phrase,countList in GLOBAL_countDict.items():
+    sum_lr = sum(countList[0:4])
+    sum_rl = sum(countList[4:8])
+    if sum_lr != 0:
+        prob_lr = [x / sum_lr for x in countList[0:4]]
+    else:
+        prob_lr = countList[0:4]
+    if sum_rl != 0:
+        prob_rl = [x / sum_rl for x in countList[4:8]]
+    else:
+        prob_rl = countList[4:8]
+    prob_list = prob_lr + prob_rl
+    smoothed_list = []
+    for i, elem in enumerate(prob_list):
+        if i <= 3:
+            smoothed_list.append(0.5 * elem + countList[i] / (0.5 + sum_lr))
+        else:
+            smoothed_list.append(0.5 * elem + countList[i] / (0.5 + sum_rl))
+    print(smoothed_list)
+
 print('done')
 
