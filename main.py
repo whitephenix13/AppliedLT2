@@ -395,6 +395,7 @@ print(GLOBAL_count)
 
 # Writing results of smoothing LRM
 for source_target_phrase,countList in GLOBAL_countDict.items():
+    # word based reordering
     sum_lr = sum(countList[0:4])
     sum_rl = sum(countList[4:8])
     if sum_lr != 0:
@@ -409,9 +410,29 @@ for source_target_phrase,countList in GLOBAL_countDict.items():
     smoothed_list = []
     for i, elem in enumerate(prob_list):
         if i <= 3:
-            smoothed_list.append(0.5 * elem + countList[i] / (0.5 + sum_lr))
+            smoothed_list.append((0.5 * elem + countList[i]) / (0.5 + sum_lr))
         else:
-            smoothed_list.append(0.5 * elem + countList[i] / (0.5 + sum_rl))
+            smoothed_list.append((0.5 * elem + countList[i]) / (0.5 + sum_rl))
+    prob_list = []
+    # phrase based reordering
+    sum_lr = sum(countList[8:12])
+    sum_rl = sum(countList[12:16])
+    if sum_lr != 0:
+        prob_lr = [x / sum_lr for x in countList[8:12]]
+    else:
+        prob_lr = countList[8:12]
+    if sum_rl != 0:
+        prob_rl = [x / sum_rl for x in countList[12:16]]
+    else:
+        prob_rl = countList[12:16]
+    prob_list = prob_lr + prob_rl
+    for i, elem in enumerate(prob_list):
+        if i <= 3:
+            smoothed_list.append((0.5 * elem + countList[i+8]) / (0.5 + sum_lr))
+        else:
+            smoothed_list.append((0.5 * elem + countList[i+8]) / (0.5 + sum_rl))
+    #print(countList)
+    #print(prob_list)
     print(smoothed_list)
 
 print('done')
