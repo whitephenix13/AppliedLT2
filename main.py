@@ -30,7 +30,7 @@ GLOBAL_f_align = open(DATA_DIR +filename+'.aligned', 'r')
 #countDict: dict[(German word,English word)] = [p1(word),p2(word),...,p8(word),p1(phrase),p2(phrase),...,p8(phrase]
 #The idea of the algorithm is to check if each word alone can be a phrase and to extend those phrase by adding new words
 #to get all possible combination (see report for more explanation)
-def extractPhrases(words,words_tgt,alignments,countDict):
+def extractPhrases(words,words_tgt,alignments,countDict,event_proba):
 
     currentPhrases = [] # Memory of all the currently build "phrases" (they can be incorrect)
     currentBoxes = [] # The corresponding boxes to the current phrases
@@ -76,15 +76,15 @@ def extractPhrases(words,words_tgt,alignments,countDict):
                     phrase_tgt_new = " ".join([x for x in phrase_tgt if x != None])
 
                     #word based reordering count
-                    countDict = addWordBasedEvent((currentPhrases[i],phrase_tgt_new),newBox,alignments,countDict)
+                    countDict,event_proba = addWordBasedEvent((currentPhrases[i],phrase_tgt_new),newBox,alignments,countDict,event_proba)
                     all_phrase_pair.append((currentPhrases[i],phrase_tgt_new))
                     all_boxes.append(newBox[:]) #Use this to make a true copy of the list
 
     #Update phrase based reordering counts
     for ind, phrase_pair in enumerate(all_phrase_pair):
-        addPhraseBasedEvent(phrase_pair, all_boxes[ind], all_boxes, countDict)
+        countDict, event_proba =addPhraseBasedEvent(phrase_pair, all_boxes[ind], all_boxes, countDict,event_proba)
 
-    return countDict
+    return countDict,event_proba
 
 #prevBox: Current box of the phrases (without the new word)
 #wordAlignments: alignments for the new word to add to the phrase
@@ -161,10 +161,10 @@ def size(box):
 #sentence_alignments: list of pair of alignments (x,y) where x corresponds to the German word and y the English one
 #countDict: dict[(German word,English word)] = [p1(word),p2(word),...,p8(word),p1(phrase),p2(phrase),...,p8(phrase]
 #Returns the updated countDictionnary after addition of all events count (both left and right) in countDict
-def addWordBasedEvent(phrase_pair, phrase_box,  sentence_alignments, countDict):
+def addWordBasedEvent(phrase_pair, phrase_box,  sentence_alignments, countDict,event_proba):
     #Get rid of unaligned words
     if phrase_box==[-1,-1,-1,-1] :
-        return countDict
+        return countDict,event_proba
     lr_event = 3 #left right, 0=monotonic, 1=swap, 2= disc left, 3=disc right
     rl_event = 7 #right left, 4=monotonic, 5=swap, 6= disc left, 7=disc right
 
@@ -243,20 +243,21 @@ def addWordBasedEvent(phrase_pair, phrase_box,  sentence_alignments, countDict):
 
     if not right_bound_reached:
         countDict[phrase_pair][lr_event]+=1
+        event_proba[lr_event] +=1
     if not left_bound_reached:
         countDict[phrase_pair][rl_event]+=1
-
-    return countDict
+        event_proba[rl_event] += 1
+    return countDict,event_proba
 
 #phrase_pair: String tuple of (German phrase, English phrase)
 #source_box :  Box corresponding of the current source phrase of the form : [x min,y min,x max,y max] with an alignment defined as (x,y)
 #target_boxes: box associated to the target phrases
 #countDict: dict[(German word,English word)] = [p1(word),p2(word),...,p8(word),p1(phrase),p2(phrase),...,p8(phrase]
 #Returns the updated countDictionnary after addition of all events count (both left and right) in countDict
-def addPhraseBasedEvent(phrase_pair, source_box, target_boxes, countDict):
+def addPhraseBasedEvent(phrase_pair, source_box, target_boxes, countDict,event_proba):
     # Get rid of unaligned words
     if source_box == [-1, -1, -1, -1]:
-        return countDict
+        return countDict,event_proba
 
     #Find the best box (ie the closest to the source and the biggest wrt its size) to the left of the source one
     best_left_box = [-1,-1,-1,-1]
@@ -317,6 +318,7 @@ def addPhraseBasedEvent(phrase_pair, source_box, target_boxes, countDict):
         else:
             lr_event = 11
         countDict[phrase_pair][lr_event] += 1
+        event_proba[lr_event] += 1
     if best_left_box != [-1, -1, -1, -1]:
         if top(best_left_box) +1 == bottom(source_box):
             rl_event = 12
@@ -327,9 +329,18 @@ def addPhraseBasedEvent(phrase_pair, source_box, target_boxes, countDict):
         else:
             rl_event = 15
         countDict[phrase_pair][rl_event] += 1
+        event_proba[rl_event] += 1
+    return countDict,event_proba
 
-    return countDict
-
+#According to formula slide 22 of Reordering
+def smoothCount(count_list,event_proba):
+    sigma = 0.5
+    smoothed_list = []
+    for j in range(4) :
+        count_sum = sum(count_list[4*j:4*(j+1)])
+        for i in range(4*j,4*(j+1)):
+            smoothed_list.append((sigma * event_proba [i] + count_list[i]) / (sigma + count_sum))
+    return smoothed_list
 ####################### WRITING THE RESULT IN A FILE FUNCTION  ####################################################################""
 
 #countDict: dict[(German word,English word)] = [p1(word),p2(word),...,p8(word),p1(phrase),p2(phrase),...,p8(phrase]
@@ -348,12 +359,13 @@ def writeResults(filename,countDict):
     #for source_phrase, targetToCountDict in _phrases_src_given_tgt_counts.items():
         # f   |||e    |||p(f|e)      p(e|f) l(f|e) l(e|f) |||freq(f) freq(e) freq(f, e)
     for source_target_phrase,countList in countDict.items():
-        f.write(str(source_target_phrase[0])+ " ||| "+ str(source_target_phrase[1])+ " ||| "+ str(countList[0])+" "+ str(countList[1])+" "+ \
-                str(countList[2]) + " " + str(countList[3]) + " " + str(countList[4])+" "+ str(countList[5])+" "+ \
-                str(countList[6]) + " " + str(countList[7]) + "\n")
-        f2.write(str(source_target_phrase[0])+ " ||| "+ str(source_target_phrase[1])+ " ||| "+ str(countList[8])+" "+ str(countList[9])+" "+ \
-                str(countList[10]) + " " + str(countList[11]) + " " + str(countList[12])+" "+ str(countList[13])+" "+ \
-                str(countList[14]) + " " + str(countList[15]) + "\n")
+        smoothed_list = smoothCount(countList,GLOBAL_event_proba)
+        f.write(str(source_target_phrase[0])+ " ||| "+ str(source_target_phrase[1])+ " ||| "+ str(smoothed_list[0])+\
+                " "+ str(smoothed_list[1])+" "+ str(smoothed_list[2]) + " " + str(smoothed_list[3]) + " " + str(smoothed_list[4])+\
+                " "+ str(smoothed_list[5])+" "+ str(smoothed_list[6]) + " " + str(smoothed_list[7]) + "\n")
+        f2.write(str(source_target_phrase[0])+ " ||| "+ str(source_target_phrase[1])+ " ||| "+ str(smoothed_list[8])+" "+\
+                 str(smoothed_list[9])+" "+ str(smoothed_list[10]) + " " + str(smoothed_list[11]) + " " + str(smoothed_list[12])+" "+\
+                 str(smoothed_list[13])+" "+ str(smoothed_list[14]) + " " + str(smoothed_list[15]) + "\n")
     f.write("\n")
     f2.write("\n")
     f.close()
@@ -366,7 +378,7 @@ def writeResults(filename,countDict):
 GLOBAL_countDict = defaultdict(lambda : [0]*16) #Dictionnary of list of 16 elements for all counts (p1->p8 and word/phrase based)
                                                 #countDict: dict[(German word,English word)] = [p1(word),p2(word),...,p8(word),
                                                 # p1(phrase),p2(phrase),...,p8(phrase]
-
+GLOBAL_event_proba =[0] * 16 #list of p(o) where o is a reoredering event: [p l->r(m), ..., p r->l(dr)] for word and phrase based
 GLOBAL_count = 0 #Counter to see the number of iteration
 #Main loop: extract phrases and count
 for sentence_en, sentence_de, line_aligned in zip(GLOBAL_f_en, GLOBAL_f_de, GLOBAL_f_align):
@@ -386,54 +398,20 @@ for sentence_en, sentence_de, line_aligned in zip(GLOBAL_f_en, GLOBAL_f_de, GLOB
         alignments.append(al.split("-"))
     alignments=[list(map(int,pair)) for pair in alignments]
     #Extracts phrases and count phrases occurences
-    GLOBAL_countDict = extractPhrases(words_de, words_en, alignments,GLOBAL_countDict)
+    GLOBAL_countDict,GLOBAL_event_proba = extractPhrases(words_de, words_en, alignments,GLOBAL_countDict,GLOBAL_event_proba)
     GLOBAL_count += 1
 print(GLOBAL_count)
 
-#Write the result
-#writeResults("final_result", GLOBAL_countDict)
+#Transform event proba to real proba :
+for i in range(4):
+    event_sum = sum(GLOBAL_event_proba[4*i:4*(i+1)])
+    if event_sum>0 :
+        for j in range(4*i,4*(i+1)):
+            GLOBAL_event_proba[j] /= event_sum
 
-# Writing results of smoothing LRM
-for source_target_phrase,countList in GLOBAL_countDict.items():
-    # word based reordering
-    sum_lr = sum(countList[0:4])
-    sum_rl = sum(countList[4:8])
-    if sum_lr != 0:
-        prob_lr = [x / sum_lr for x in countList[0:4]]
-    else:
-        prob_lr = countList[0:4]
-    if sum_rl != 0:
-        prob_rl = [x / sum_rl for x in countList[4:8]]
-    else:
-        prob_rl = countList[4:8]
-    prob_list = prob_lr + prob_rl
-    smoothed_list = []
-    for i, elem in enumerate(prob_list):
-        if i <= 3:
-            smoothed_list.append((0.5 * elem + countList[i]) / (0.5 + sum_lr))
-        else:
-            smoothed_list.append((0.5 * elem + countList[i]) / (0.5 + sum_rl))
-    prob_list = []
-    # phrase based reordering
-    sum_lr = sum(countList[8:12])
-    sum_rl = sum(countList[12:16])
-    if sum_lr != 0:
-        prob_lr = [x / sum_lr for x in countList[8:12]]
-    else:
-        prob_lr = countList[8:12]
-    if sum_rl != 0:
-        prob_rl = [x / sum_rl for x in countList[12:16]]
-    else:
-        prob_rl = countList[12:16]
-    prob_list = prob_lr + prob_rl
-    for i, elem in enumerate(prob_list):
-        if i <= 3:
-            smoothed_list.append((0.5 * elem + countList[i+8]) / (0.5 + sum_lr))
-        else:
-            smoothed_list.append((0.5 * elem + countList[i+8]) / (0.5 + sum_rl))
-    #print(countList)
-    #print(prob_list)
-    print(smoothed_list)
+#Write the result
+writeResults("final_result", GLOBAL_countDict)
+
 
 print('done')
 
