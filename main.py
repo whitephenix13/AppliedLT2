@@ -1,10 +1,20 @@
 from collections import defaultdict
 import sys
+import matplotlib.pyplot as plt
+import dill as pickle
+from collections import OrderedDict
+import numpy as np
 
 #HYPERPARAMETERS
 MAX_SENTENCE_LENGTH= 7 # Do not consider create phrase pair in english or german that have >MAX_SENTENCE_LENGTH words
-TEST_stop_after = 500 #set to negative value to consider all dataset or set to max number of phrase
+TEST_stop_after = -1 #set to negative value to consider all dataset or set to max number of phrase
 TEST = False #set to True to read the test. files instead of the file.
+MISALIGN = True
+MISALIGN_PROB = 0.30
+PLOT_LENGTH = False
+PLOT_TOP_PHRASES_PAIR = True
+PLOT_COUNTS = False
+LEFT_DIRECTION = True
 
 #Small fix for python 3 code
 python3Code = False;
@@ -59,9 +69,15 @@ def extractPhrases(words,words_tgt,alignments,countDict,event_proba):
                 currentPhrases[i] += " " + words[word_ind]
             correct, newBox = checkCorrectPhrase(currentBoxes[i],wordAlignments,alignments)
             #Update current box
-            currentBoxes[i] = newBox
+            if not MISALIGN:
+                currentBoxes[i] = newBox
+            else:
+                rand = np.random.uniform()
+                if rand > MISALIGN_PROB:
+                    currentBoxes[i] = newBox
             #Add the new phrase to the final result if correct
             if correct :
+
                 phrase_tgt = [None] * len(words_tgt)  # to generate phrase in the target side
 
                 target_index = []
@@ -381,37 +397,144 @@ GLOBAL_countDict = defaultdict(lambda : [0]*16) #Dictionnary of list of 16 eleme
 GLOBAL_event_proba =[0] * 16 #list of p(o) where o is a reoredering event: [p l->r(m), ..., p r->l(dr)] for word and phrase based
 GLOBAL_count = 0 #Counter to see the number of iteration
 #Main loop: extract phrases and count
-for sentence_en, sentence_de, line_aligned in zip(GLOBAL_f_en, GLOBAL_f_de, GLOBAL_f_align):
-    if GLOBAL_count%1000 == 0:
-        print('count: '+ str(GLOBAL_count))
-    if TEST_stop_after>0 and GLOBAL_count > TEST_stop_after:
-        break
-    #Extract the words from the phrase and remove the empty word
-    words_de = sentence_de.replace("\n","").split(" ")
-    words_de = list(filter(lambda x: x != '', words_de))
-    words_en = sentence_en.replace("\n","").split(" ")
-    words_en = list(filter(lambda x: x != '', words_en))
-    alignments = []
-    #Store the alignments in the format : [[1,1][2,1][3,2]]
-    alignments_temp = line_aligned.replace("\n","").split(" ")
-    for al in alignments_temp:
-        alignments.append(al.split("-"))
-    alignments=[list(map(int,pair)) for pair in alignments]
-    #Extracts phrases and count phrases occurences
-    GLOBAL_countDict,GLOBAL_event_proba = extractPhrases(words_de, words_en, alignments,GLOBAL_countDict,GLOBAL_event_proba)
-    GLOBAL_count += 1
-print(GLOBAL_count)
-
-#Transform event proba to real proba :
-for i in range(4):
-    event_sum = sum(GLOBAL_event_proba[4*i:4*(i+1)])
-    if event_sum>0 :
-        for j in range(4*i,4*(i+1)):
-            GLOBAL_event_proba[j] /= event_sum
+# for sentence_en, sentence_de, line_aligned in zip(GLOBAL_f_en, GLOBAL_f_de, GLOBAL_f_align):
+#     if GLOBAL_count%1000 == 0:
+#         print('count: '+ str(GLOBAL_count))
+#     if TEST_stop_after>0 and GLOBAL_count > TEST_stop_after:
+#         break
+#     #Extract the words from the phrase and remove the empty word
+#     words_de = sentence_de.replace("\n","").split(" ")
+#     words_de = list(filter(lambda x: x != '', words_de))
+#     words_en = sentence_en.replace("\n","").split(" ")
+#     words_en = list(filter(lambda x: x != '', words_en))
+#     alignments = []
+#     #Store the alignments in the format : [[1,1][2,1][3,2]]
+#     alignments_temp = line_aligned.replace("\n","").split(" ")
+#     for al in alignments_temp:
+#         alignments.append(al.split("-"))
+#     alignments=[list(map(int,pair)) for pair in alignments]
+#     #Extracts phrases and count phrases occurences
+#     GLOBAL_countDict,GLOBAL_event_proba = extractPhrases(words_de, words_en, alignments,GLOBAL_countDict,GLOBAL_event_proba)
+#     GLOBAL_count += 1
+# print(GLOBAL_count)
+#
+# #Transform event proba to real proba :
+# for i in range(4):
+#     event_sum = sum(GLOBAL_event_proba[4*i:4*(i+1)])
+#     if event_sum>0 :
+#         for j in range(4*i,4*(i+1)):
+#             GLOBAL_event_proba[j] /= event_sum
+#
+# pickle.dump(GLOBAL_countDict, open("count_dict_misalign_30.dump", "wb"))
+# pickle.dump(GLOBAL_event_proba, open("prob_dict_misalign_30.dump", "wb"))
 
 #Write the result
-writeResults("final_result", GLOBAL_countDict)
+#writeResults("final_result", GLOBAL_countDict)
+
+# top 100 phrase pair
+def plot_top_phrases_pair(start, end, name):
+    # load dict
+    countDict = pickle.load(open("count_dict.dump", "rb"))
+    sumDict = defaultdict(lambda: [0] * 16)
+    for key in countDict:
+        sumDict[key] = sum(countDict[key][start:end])
+    sortedSumDict = dict(sorted(sumDict.items(), key=lambda x: x[1], reverse=True)[:100])
+    index = range(100)
+    labels = []
+    for key in sortedSumDict:
+        labels.append('--'.join(key))
+    res = []
+    for i in range(4):
+        x = []
+        for key in sortedSumDict:
+            x.append(countDict[key][i+start])
+        res.append(x)
+    plt.title('Phrase Based Model - ' + name + ' - Top 100 Frequent')
+    plt.ylabel('Occurences')
+    red, = plt.plot(index, res[0], 'ro')
+    blue, = plt.plot(index, res[1], 'bs')
+    green, = plt.plot(index, res[2], 'g^')
+    yellow, = plt.plot(index, res[3], 'y+')
+
+    plt.legend([red,blue,green,yellow], ['Monotonic','Swap','Discontinuous Left','Discontinuous Right'])
+    plt.xticks(index, labels, rotation='vertical')
+    plt.tight_layout()
+    plt.show()
+
+# number of counts occurences
+def plot_counts_occurences(start, name):
+    # load dict
+    countDict = pickle.load(open("count_dict.dump", "rb"))
+    title = ["Monotonic", "Swap", "Discontinuous Right", "Discontinuous Left"]
+    color =  ["red","blue","green","yellow"]
+    fig, ax = plt.subplots(nrows=2, ncols=2)
+    fig.suptitle("Phrase Based Model - " + name + " - Top 100 Frequent", fontsize=16)
+    for i in range(4):
+        x = []
+        for key in countDict:
+            x.append(countDict[key][i+start])
+        plt.subplot(2, 2, i+1)
+        plt.title(title[i])
+        plt.ylabel('Phrases Pair Occurences Counts')
+        plt.xlabel('Phrases Pair Total')
+        plt.plot(x, color=color[i])
+    plt.tight_layout()
+    plt.show()
 
 
-print('done')
+# lengths vs occurences
+def plot_length_occurences(start, end, names):
+    src_length = defaultdict(lambda : [0] * 4)
+    tgt_length = defaultdict(lambda : [0] * 4)
+    countDict = pickle.load(open("count_dict.dump", "rb"))
+    for key in countDict:
+        src_length[len(key[0].split())] = [a + b for a,b in zip(countDict[key][start:end],src_length[len(key[0].split())])]
+        tgt_length[len(key[1].split())] = [a + b for a,b in zip(countDict[key][start:end],src_length[len(key[1].split())])]
+    src_length = OrderedDict(sorted(src_length.items()))
+    tgt_length = OrderedDict(sorted(tgt_length.items()))
+    labels = [list(src_length.keys()), list(tgt_length.keys())]
+    indexes = [range(len(src_length)), range(len(tgt_length))]
 
+    name = ["Source", "Target"]
+    plt.subplots(nrows=2, ncols=1)
+    for j in range(2):
+        res = []
+        if j == 0:
+            di = src_length
+        else:
+            di = tgt_length
+        for i in range(4):
+            x = []
+            for key in di:
+                x.append(di[key][i])
+            res.append(x)
+        plt.subplot(2,1,j+1)
+        plt.title('Phrase Based Model - ' + names + ' - ' + name[j] + ' Length vs Occurences')
+        plt.ylabel('Occurences')
+        red, = plt.plot(indexes[j], res[0], 'ro')
+        blue, = plt.plot(indexes[j], res[1], 'bs')
+        green, = plt.plot(indexes[j], res[2], 'g^')
+        yellow, = plt.plot(indexes[j], res[3], 'y+')
+        plt.legend([red,blue,green,yellow], ['Monotonic','Swap','Discontinuous Left','Discontinuous Right'])
+        plt.xticks(indexes[j], labels[j], rotation='vertical')
+    plt.tight_layout()
+    plt.show()
+
+# plotting all metrics
+if PLOT_TOP_PHRASES_PAIR:
+    if LEFT_DIRECTION:
+        plot_top_phrases_pair(8, 12, "Left to Right")
+    else:
+        plot_top_phrases_pair(12, 16, "Right to Left")
+if PLOT_COUNTS:
+    if LEFT_DIRECTION:
+        plot_counts_occurences(8, "Left to Right")
+    else:
+        plot_counts_occurences(12, "Right to Left")
+if PLOT_LENGTH:
+    if LEFT_DIRECTION:
+        plot_length_occurences(8, 12, "Left to Right")
+    else:
+        plot_length_occurences(12, 16, "Right to Left")
+
+#print('done')
