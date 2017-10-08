@@ -1,21 +1,14 @@
 from collections import defaultdict
 import sys
-<<<<<<< HEAD
 import matplotlib.pyplot as plt
 import dill as pickle
 from collections import OrderedDict
 import numpy as np
-
-#HYPERPARAMETERS
-MAX_SENTENCE_LENGTH= 7 # Do not consider create phrase pair in english or german that have >MAX_SENTENCE_LENGTH words
-TEST_stop_after = -1 #set to negative value to consider all dataset or set to max number of phrase
-=======
 import time
 
 #HYPERPARAMETERS
 MAX_SENTENCE_LENGTH= 7 # Do not consider create phrase pair in english or german that have >MAX_SENTENCE_LENGTH words
-TEST_stop_after = 50000 #set to negative value to consider all dataset or set to max number of phrase
->>>>>>> f039438e3c947e18fabd5947164383ff3b1e0777
+TEST_stop_after = -1 #set to negative value to consider all dataset or set to max number of phrase
 TEST = False #set to True to read the test. files instead of the file.
 MISALIGN = True
 MISALIGN_PROB = 0.30
