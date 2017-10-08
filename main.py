@@ -1,5 +1,6 @@
 from collections import defaultdict
 import sys
+<<<<<<< HEAD
 import matplotlib.pyplot as plt
 import dill as pickle
 from collections import OrderedDict
@@ -8,6 +9,13 @@ import numpy as np
 #HYPERPARAMETERS
 MAX_SENTENCE_LENGTH= 7 # Do not consider create phrase pair in english or german that have >MAX_SENTENCE_LENGTH words
 TEST_stop_after = -1 #set to negative value to consider all dataset or set to max number of phrase
+=======
+import time
+
+#HYPERPARAMETERS
+MAX_SENTENCE_LENGTH= 7 # Do not consider create phrase pair in english or german that have >MAX_SENTENCE_LENGTH words
+TEST_stop_after = 50000 #set to negative value to consider all dataset or set to max number of phrase
+>>>>>>> f039438e3c947e18fabd5947164383ff3b1e0777
 TEST = False #set to True to read the test. files instead of the file.
 MISALIGN = True
 MISALIGN_PROB = 0.30
@@ -396,6 +404,9 @@ GLOBAL_countDict = defaultdict(lambda : [0]*16) #Dictionnary of list of 16 eleme
                                                 # p1(phrase),p2(phrase),...,p8(phrase]
 GLOBAL_event_proba =[0] * 16 #list of p(o) where o is a reoredering event: [p l->r(m), ..., p r->l(dr)] for word and phrase based
 GLOBAL_count = 0 #Counter to see the number of iteration
+max_count = TEST_stop_after if TEST_stop_after>0 else 50000
+start_time = time.time()
+
 #Main loop: extract phrases and count
 # for sentence_en, sentence_de, line_aligned in zip(GLOBAL_f_en, GLOBAL_f_de, GLOBAL_f_align):
 #     if GLOBAL_count%1000 == 0:
