@@ -10,17 +10,38 @@ import time
 MAX_SENTENCE_LENGTH= 7 # Do not consider create phrase pair in english or german that have >MAX_SENTENCE_LENGTH words
 TEST_stop_after = -1 #set to negative value to consider all dataset or set to max number of phrase
 TEST = False #set to True to read the test. files instead of the file.
-MISALIGN = True
-MISALIGN_PROB = 0.30
-PLOT_LENGTH = False
-PLOT_TOP_PHRASES_PAIR = True
-PLOT_COUNTS = False
-LEFT_DIRECTION = True
+
+COMPUTE_MODEL=False #Set this to true to compute the model, otherwise the data will be load from
+
+MISALIGN_SOURCE = False #True: randomly misaligned a source word with a probability of MISALIGN_PROB
+MISALIGN_TARGET= False #True: randomly misaligned a target word with a probability of MISALIGN_PROB
+MISALIGN_PROB = 0.3
+PLOT_MISALIGN = MISALIGN_SOURCE or MISALIGN_TARGET
+
+PLOT_LENGTH = False #Plot the frequence of the orientations with respect to sentence length
+
+PLOT_TOP_PHRASES_PAIR = True #Plot the top 100 most frequent phrase with their reordering events associated
+
+PLOT_COUNTS = False #Plot the the frequence of the orientations  with respect to phrase pairs (not used in the report)
+
+LEFT_DIRECTION = True #consider left to right alignment
 
 #Small fix for python 3 code
 python3Code = False;
 if (sys.version_info > (3, 0)):
     python3Code = True
+
+#Save extension :
+if MISALIGN_SOURCE :
+    SAVE_EXTENSION = ('_misaligned_source_' + str(MISALIGN_PROB))
+elif MISALIGN_TARGET :
+    SAVE_EXTENSION = ('_misaligned_target_' + str(MISALIGN_PROB))
+else:
+    SAVE_EXTENSION=''
+if LEFT_DIRECTION:
+    SAVE_EXTENSION+='_left'
+else:
+    SAVE_EXTENSION+='_right'
 
 #Open the .en, .de and .aligned files
 DATA_DIR  = 'data/'
@@ -49,8 +70,19 @@ def extractPhrases(words,words_tgt,alignments,countDict,event_proba):
 
     all_phrase_pair = []
     all_boxes = []
+    if MISALIGN_TARGET:
+        for word_ind in range(len(words_tgt)):
+            rand = np.random.uniform()
+            if rand < MISALIGN_PROB:
+                removeWordAlignement(word_ind, alignments,True)
+
     #Loop over all the source words
     for word_ind in range(len(words)) :
+        #LAST PART: Test importance of alignment
+        if MISALIGN_SOURCE:
+            rand = np.random.uniform()
+            if rand < MISALIGN_PROB:
+                removeWordAlignement(word_ind,alignments)
         wordAlignments = findWordAlignments(word_ind,alignments)
         #Add a new box and a new phrase for the word
         currentBoxes.append([-1,-1,-1,-1])
@@ -70,12 +102,8 @@ def extractPhrases(words,words_tgt,alignments,countDict,event_proba):
                 currentPhrases[i] += " " + words[word_ind]
             correct, newBox = checkCorrectPhrase(currentBoxes[i],wordAlignments,alignments)
             #Update current box
-            if not MISALIGN:
-                currentBoxes[i] = newBox
-            else:
-                rand = np.random.uniform()
-                if rand > MISALIGN_PROB:
-                    currentBoxes[i] = newBox
+            currentBoxes[i] = newBox
+
             #Add the new phrase to the final result if correct
             if correct :
 
@@ -133,6 +161,19 @@ def findWordAlignments(word_index,alignments,reverse=False):
             allAlignments.append(pair)
     return allAlignments
 
+#word_index: index of the word in the phrase
+#alignments: All words alignment
+#reverse: if alignments is de -> en , set reverse to true to have the corresponding en -> de alignments
+#Remove all alignments containing the word_index. Used to check the influence of misalignment
+def removeWordAlignement(word_index,alignments,reverse=False):
+    indexes = []
+    for i in range(len(alignments)):
+        pair=alignments[i]
+        if( (not reverse and (word_index==pair[0])) or (reverse and (word_index==pair[1]) ) ):
+            indexes.append(i)
+
+    for j in range(len(indexes)):
+        del(alignments[indexes[j]-j])
 # prevBox: Current box of the phrases
 # newAlignment: alignement corresponding to the new word in the format [x,y] that has to be added to the prevBox
 # Computes the box associated to the phrase. The computation is done by extending the box due to the addition of a word to the phrase.
@@ -388,61 +429,16 @@ def writeResults(filename,countDict):
     f.close()
     f2.close()
 
-############################            MAIN             ###########################################################################
-
-
-### Define variables
-GLOBAL_countDict = defaultdict(lambda : [0]*16) #Dictionnary of list of 16 elements for all counts (p1->p8 and word/phrase based)
-                                                #countDict: dict[(German word,English word)] = [p1(word),p2(word),...,p8(word),
-                                                # p1(phrase),p2(phrase),...,p8(phrase]
-GLOBAL_event_proba =[0] * 16 #list of p(o) where o is a reoredering event: [p l->r(m), ..., p r->l(dr)] for word and phrase based
-GLOBAL_count = 0 #Counter to see the number of iteration
-max_count = TEST_stop_after if TEST_stop_after>0 else 50000
-start_time = time.time()
-
-#Main loop: extract phrases and count
-# for sentence_en, sentence_de, line_aligned in zip(GLOBAL_f_en, GLOBAL_f_de, GLOBAL_f_align):
-#     if GLOBAL_count%1000 == 0:
-#         print('count: '+ str(GLOBAL_count))
-#     if TEST_stop_after>0 and GLOBAL_count > TEST_stop_after:
-#         break
-#     #Extract the words from the phrase and remove the empty word
-#     words_de = sentence_de.replace("\n","").split(" ")
-#     words_de = list(filter(lambda x: x != '', words_de))
-#     words_en = sentence_en.replace("\n","").split(" ")
-#     words_en = list(filter(lambda x: x != '', words_en))
-#     alignments = []
-#     #Store the alignments in the format : [[1,1][2,1][3,2]]
-#     alignments_temp = line_aligned.replace("\n","").split(" ")
-#     for al in alignments_temp:
-#         alignments.append(al.split("-"))
-#     alignments=[list(map(int,pair)) for pair in alignments]
-#     #Extracts phrases and count phrases occurences
-#     GLOBAL_countDict,GLOBAL_event_proba = extractPhrases(words_de, words_en, alignments,GLOBAL_countDict,GLOBAL_event_proba)
-#     GLOBAL_count += 1
-# print(GLOBAL_count)
-#
-# #Transform event proba to real proba :
-# for i in range(4):
-#     event_sum = sum(GLOBAL_event_proba[4*i:4*(i+1)])
-#     if event_sum>0 :
-#         for j in range(4*i,4*(i+1)):
-#             GLOBAL_event_proba[j] /= event_sum
-#
-# pickle.dump(GLOBAL_countDict, open("count_dict_misalign_30.dump", "wb"))
-# pickle.dump(GLOBAL_event_proba, open("prob_dict_misalign_30.dump", "wb"))
-
-#Write the result
-#writeResults("final_result", GLOBAL_countDict)
+############################            PLOTS             ###########################################################################
 
 # top 100 phrase pair
 def plot_top_phrases_pair(start, end, name):
     # load dict
-    countDict = pickle.load(open("count_dict.dump", "rb"))
+    countDict = pickle.load(open("dump/count_dict"+SAVE_EXTENSION+".dump", "rb"))
     sumDict = defaultdict(lambda: [0] * 16)
     for key in countDict:
         sumDict[key] = sum(countDict[key][start:end])
-    sortedSumDict = dict(sorted(sumDict.items(), key=lambda x: x[1], reverse=True)[:100])
+    sortedSumDict = OrderedDict(sorted(sumDict.items(), key=lambda x: x[1], reverse=True)[:100])
     index = range(100)
     labels = []
     for key in sortedSumDict:
@@ -468,7 +464,7 @@ def plot_top_phrases_pair(start, end, name):
 # number of counts occurences
 def plot_counts_occurences(start, name):
     # load dict
-    countDict = pickle.load(open("count_dict.dump", "rb"))
+    countDict = pickle.load(open("dump/count_dict.dump", "rb"))
     title = ["Monotonic", "Swap", "Discontinuous Right", "Discontinuous Left"]
     color =  ["red","blue","green","yellow"]
     fig, ax = plt.subplots(nrows=2, ncols=2)
@@ -490,7 +486,7 @@ def plot_counts_occurences(start, name):
 def plot_length_occurences(start, end, names):
     src_length = defaultdict(lambda : [0] * 4)
     tgt_length = defaultdict(lambda : [0] * 4)
-    countDict = pickle.load(open("count_dict.dump", "rb"))
+    countDict = pickle.load(open("dump/count_dict.dump", "rb"))
     for key in countDict:
         src_length[len(key[0].split())] = [a + b for a,b in zip(countDict[key][start:end],src_length[len(key[0].split())])]
         tgt_length[len(key[1].split())] = [a + b for a,b in zip(countDict[key][start:end],src_length[len(key[1].split())])]
@@ -524,6 +520,56 @@ def plot_length_occurences(start, end, names):
     plt.tight_layout()
     plt.show()
 
+############################            MAIN             ###########################################################################
+
+### Define variables
+GLOBAL_countDict = defaultdict(lambda : [0]*16) #Dictionnary of list of 16 elements for all counts (p1->p8 and word/phrase based)
+                                                #countDict: dict[(German word,English word)] = [p1(word),p2(word),...,p8(word),
+                                                # p1(phrase),p2(phrase),...,p8(phrase]
+GLOBAL_event_proba =[0] * 16 #list of p(o) where o is a reoredering event: [p l->r(m), ..., p r->l(dr)] for word and phrase based
+GLOBAL_count = 0 #Counter to see the number of iteration
+max_count = TEST_stop_after if TEST_stop_after>0 else 50000
+start_time = time.time()
+
+#Main loop: extract phrases and count
+if COMPUTE_MODEL:
+    for sentence_en, sentence_de, line_aligned in zip(GLOBAL_f_en, GLOBAL_f_de, GLOBAL_f_align):
+        if GLOBAL_count>0 and GLOBAL_count%1000 == 0:
+            print('count: '+ str(GLOBAL_count)+ ' estimated ends in '+ str(((max_count / GLOBAL_count)-1) *(time.time()-start_time)))
+        if TEST_stop_after>0 and GLOBAL_count > TEST_stop_after:
+            break
+        #Extract the words from the phrase and remove the empty word
+        words_de = sentence_de.replace("\n","").split(" ")
+        words_de = list(filter(lambda x: x != '', words_de))
+        words_en = sentence_en.replace("\n","").split(" ")
+        words_en = list(filter(lambda x: x != '', words_en))
+        alignments = []
+        #Store the alignments in the format : [[1,1][2,1][3,2]]
+        alignments_temp = line_aligned.replace("\n","").split(" ")
+        for al in alignments_temp:
+            alignments.append(al.split("-"))
+        alignments=[list(map(int,pair)) for pair in alignments]
+        #Extracts phrases and count phrases occurences
+        GLOBAL_countDict,GLOBAL_event_proba = extractPhrases(words_de, words_en, alignments,GLOBAL_countDict,GLOBAL_event_proba)
+        GLOBAL_count += 1
+    print(GLOBAL_count)
+
+    #Transform event proba to real proba :
+    for i in range(4):
+        event_sum = sum(GLOBAL_event_proba[4*i:4*(i+1)])
+        if event_sum>0 :
+            for j in range(4*i,4*(i+1)):
+                GLOBAL_event_proba[j] /= event_sum
+
+    pickle.dump(GLOBAL_countDict, open("dump/count_dict" +SAVE_EXTENSION +".dump", "wb"))
+    pickle.dump(GLOBAL_event_proba, open("dump/prob_dict"+SAVE_EXTENSION+".dump", "wb"))
+
+
+#Write the result
+#writeResults("final_result", GLOBAL_countDict)
+
+
+
 # plotting all metrics
 if PLOT_TOP_PHRASES_PAIR:
     if LEFT_DIRECTION:
@@ -541,4 +587,9 @@ if PLOT_LENGTH:
     else:
         plot_length_occurences(12, 16, "Right to Left")
 
+if PLOT_MISALIGN:
+    if LEFT_DIRECTION:
+        plot_top_phrases_pair(8, 12, "Left to Right")
+    else:
+        plot_top_phrases_pair(12, 16, "Right to Left")
 #print('done')
